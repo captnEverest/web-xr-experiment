@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebXR Hand Input — AVP</title>
+<title>WebXR Hand Skeleton Points — AVP</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -112,7 +112,7 @@
 <canvas id="canvas"></canvas>
 
 <div id="ui">
-  <div id="title"><span class="dot"></span>WebXR · Hand Input</div>
+  <div id="title"><span class="dot"></span>WebXR · Hand Skeleton</div>
   <button id="enter-btn" onclick="enterXR()">Enter VR</button>
   <div id="check-support"></div>
 </div>
@@ -138,6 +138,8 @@ let handProg   = null;
 
 let t = 0;
 const orbs = [];
+const SHOW_ORBS = false;
+const JOINT_NEON_SKY_BLUE = [0.20, 0.90, 1.00];
 
 // ─── logging ─────────────────────────────────────────────────────────────────
 const logs = [];
@@ -351,29 +353,31 @@ function initScene() {
 
   sphereMesh = uploadSphere(makeSphere(1.0, 24, 24));
 
-  const colors = [
-    [0.4, 0.3, 1.0],
-    [0.2, 0.8, 0.9],
-    [1.0, 0.3, 0.5],
-    [0.3, 1.0, 0.6],
-    [1.0, 0.7, 0.2],
-    [0.6, 0.3, 1.0],
-  ];
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2;
-    orbs.push({
-      x: Math.cos(angle) * 1.8,
-      y: Math.sin(i * 0.7) * 0.3,
-      z: Math.sin(angle) * 1.8 - 3.0,
-      baseY:       Math.sin(i * 0.7) * 0.3,
-      phaseOffset: i * 1.1,
-      color:       colors[i],
-      scale:       0.12 + (i % 3) * 0.04,
-      // interaction state
-      hovered:    false,
-      grabbed:    false,
-      grabbedBy:  null,
-    });
+  if (SHOW_ORBS) {
+    const colors = [
+      [0.4, 0.3, 1.0],
+      [0.2, 0.8, 0.9],
+      [1.0, 0.3, 0.5],
+      [0.3, 1.0, 0.6],
+      [1.0, 0.7, 0.2],
+      [0.6, 0.3, 1.0],
+    ];
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2;
+      orbs.push({
+        x: Math.cos(angle) * 1.8,
+        y: Math.sin(i * 0.7) * 0.3,
+        z: Math.sin(angle) * 1.8 - 3.0,
+        baseY:       Math.sin(i * 0.7) * 0.3,
+        phaseOffset: i * 1.1,
+        color:       colors[i],
+        scale:       0.12 + (i % 3) * 0.04,
+        // interaction state
+        hovered:    false,
+        grabbed:    false,
+        grabbedBy:  null,
+      });
+    }
   }
 
   log('Scene initialized');
@@ -483,50 +487,52 @@ function processHands(frame) {
     if (hd.justReleased) log(`${side.toUpperCase()} pinch ↑`);
   }
 
-  // — hover detection —
-  for (const orb of orbs) {
-    orb.hovered = false;
-    for (const side of ['left', 'right']) {
-      const hd = handData[side];
-      if (!hd.indexTip) continue;
-      const d = dist3(hd.indexTip, { x: orb.x, y: orb.y, z: orb.z });
-      if (d < orb.scale + HOVER_DIST) { orb.hovered = true; break; }
+  if (SHOW_ORBS) {
+    // — hover detection —
+    for (const orb of orbs) {
+      orb.hovered = false;
+      for (const side of ['left', 'right']) {
+        const hd = handData[side];
+        if (!hd.indexTip) continue;
+        const d = dist3(hd.indexTip, { x: orb.x, y: orb.y, z: orb.z });
+        if (d < orb.scale + HOVER_DIST) { orb.hovered = true; break; }
+      }
     }
-  }
 
-  // — grab / release —
-  for (const orb of orbs) {
-    for (const side of ['left', 'right']) {
-      const hd = handData[side];
-      if (!hd.mid) continue;
+    // — grab / release —
+    for (const orb of orbs) {
+      for (const side of ['left', 'right']) {
+        const hd = handData[side];
+        if (!hd.mid) continue;
 
-      // grab on pinch start while hovering
-      if (hd.justPinched && !orb.grabbed && orb.hovered) {
-        const d = dist3(hd.mid, { x: orb.x, y: orb.y, z: orb.z });
-        if (d < orb.scale + HOVER_DIST + 0.05) {
-          orb.grabbed   = true;
-          orb.grabbedBy = side;
-          log(`${side.toUpperCase()} grabbed orb`);
+        // grab on pinch start while hovering
+        if (hd.justPinched && !orb.grabbed && orb.hovered) {
+          const d = dist3(hd.mid, { x: orb.x, y: orb.y, z: orb.z });
+          if (d < orb.scale + HOVER_DIST + 0.05) {
+            orb.grabbed   = true;
+            orb.grabbedBy = side;
+            log(`${side.toUpperCase()} grabbed orb`);
+          }
+        }
+
+        // release
+        if (hd.justReleased && orb.grabbed && orb.grabbedBy === side) {
+          orb.grabbed   = false;
+          orb.grabbedBy = null;
+          log(`${side.toUpperCase()} released orb`);
         }
       }
-
-      // release
-      if (hd.justReleased && orb.grabbed && orb.grabbedBy === side) {
-        orb.grabbed   = false;
-        orb.grabbedBy = null;
-        log(`${side.toUpperCase()} released orb`);
-      }
     }
-  }
 
-  // — move grabbed orbs toward hand midpoint —
-  for (const orb of orbs) {
-    if (orb.grabbed) {
-      const hd = handData[orb.grabbedBy];
-      if (hd?.mid) {
-        orb.x = lerp(orb.x, hd.mid.x, 0.35);
-        orb.y = lerp(orb.y, hd.mid.y, 0.35);
-        orb.z = lerp(orb.z, hd.mid.z, 0.35);
+    // — move grabbed orbs toward hand midpoint —
+    for (const orb of orbs) {
+      if (orb.grabbed) {
+        const hd = handData[orb.grabbedBy];
+        if (hd?.mid) {
+          orb.x = lerp(orb.x, hd.mid.x, 0.35);
+          orb.y = lerp(orb.y, hd.mid.y, 0.35);
+          orb.z = lerp(orb.z, hd.mid.z, 0.35);
+        }
       }
     }
   }
@@ -558,7 +564,7 @@ function renderHands(frame, view) {
   for (const source of xrSession.inputSources) {
     if (!source.hand) continue;
     const isLeft = source.handedness === 'left';
-    const jointColor = isLeft ? [0.35, 0.75, 1.0] : [1.0, 0.5, 0.3];
+    const jointColor = JOINT_NEON_SKY_BLUE;
 
     let thumbTipPos = null, indexTipPos = null;
 
@@ -568,15 +574,21 @@ function renderHands(frame, view) {
       const jp = frame.getJointPose(joint, xrRefSpace);
       if (!jp) continue;
 
-      const r = jp.radius || 0.007;
+      const r = Math.max(jp.radius || 0.007, 0.0075);
       const p = jp.transform.position;
 
       if (jointName === 'thumb-tip')        thumbTipPos = p;
       if (jointName === 'index-finger-tip') indexTipPos = p;
 
-      const model = mat4.multiply(mat4.translation(p.x, p.y, p.z), mat4.scale(r, r, r));
-      const mvp   = mat4.multiply(proj, mat4.multiply(viewMat, model));
-      drawSimpleSphere(mvp, jointColor, 0.80);
+      const glowScale = r * 2.0;
+      const glowModel = mat4.multiply(mat4.translation(p.x, p.y, p.z), mat4.scale(glowScale, glowScale, glowScale));
+      const glowMvp   = mat4.multiply(proj, mat4.multiply(viewMat, glowModel));
+      drawSimpleSphere(glowMvp, jointColor, 0.20);
+
+      const coreScale = r * 1.1;
+      const coreModel = mat4.multiply(mat4.translation(p.x, p.y, p.z), mat4.scale(coreScale, coreScale, coreScale));
+      const coreMvp   = mat4.multiply(proj, mat4.multiply(viewMat, coreModel));
+      drawSimpleSphere(coreMvp, jointColor, 0.96);
     }
 
     // — pinch indicator: glowing sphere between thumb and index tips —
@@ -587,10 +599,13 @@ function renderHands(frame, view) {
       const my = (thumbTipPos.y + indexTipPos.y) / 2;
       const mz = (thumbTipPos.z + indexTipPos.z) / 2;
       const pr = 0.010 + Math.sin(t * 8) * 0.002; // subtle pulse
-      const pinchColor = isLeft ? [0.5, 1.0, 1.0] : [1.0, 0.85, 0.4];
-      const model = mat4.multiply(mat4.translation(mx, my, mz), mat4.scale(pr, pr, pr));
-      const mvp   = mat4.multiply(proj, mat4.multiply(viewMat, model));
-      drawSimpleSphere(mvp, pinchColor, 0.95);
+      const pinchColor = JOINT_NEON_SKY_BLUE;
+      const glowModel = mat4.multiply(mat4.translation(mx, my, mz), mat4.scale(pr * 2.3, pr * 2.3, pr * 2.3));
+      const glowMvp   = mat4.multiply(proj, mat4.multiply(viewMat, glowModel));
+      drawSimpleSphere(glowMvp, pinchColor, 0.30);
+      const coreModel = mat4.multiply(mat4.translation(mx, my, mz), mat4.scale(pr, pr, pr));
+      const coreMvp   = mat4.multiply(proj, mat4.multiply(viewMat, coreModel));
+      drawSimpleSphere(coreMvp, pinchColor, 0.98);
     }
   }
 }
@@ -607,8 +622,10 @@ function previewLoop(now) {
   previewRafId = requestAnimationFrame(previewLoop);
   t = now * 0.001;
 
-  for (const orb of orbs) {
-    orb.y = orb.baseY + Math.sin(t * 0.7 + orb.phaseOffset) * 0.15;
+  if (SHOW_ORBS) {
+    for (const orb of orbs) {
+      orb.y = orb.baseY + Math.sin(t * 0.7 + orb.phaseOffset) * 0.15;
+    }
   }
 
   resizeCanvas();
@@ -627,11 +644,13 @@ function previewLoop(now) {
   const viewMat = mat4.multiply(mat4.multiply(tilt, rot), camTx);
   const camPos  = new Float32Array([0, 0, 0]);
 
-  for (const orb of orbs) {
-    const s     = orb.scale;
-    const model = mat4.multiply(mat4.translation(orb.x, orb.y, orb.z), mat4.scale(s, s, s));
-    const mvp   = mat4.multiply(proj, mat4.multiply(viewMat, model));
-    drawOrb(mvp, model, new Float32Array(orb.color), camPos, 0.0);
+  if (SHOW_ORBS) {
+    for (const orb of orbs) {
+      const s     = orb.scale;
+      const model = mat4.multiply(mat4.translation(orb.x, orb.y, orb.z), mat4.scale(s, s, s));
+      const mvp   = mat4.multiply(proj, mat4.multiply(viewMat, model));
+      drawOrb(mvp, model, new Float32Array(orb.color), camPos, 0.0);
+    }
   }
 }
 
@@ -647,9 +666,11 @@ function xrFrame(time, frame) {
   processHands(frame);
 
   // Animate orbs that are NOT grabbed
-  for (const orb of orbs) {
-    if (!orb.grabbed) {
-      orb.y = orb.baseY + Math.sin(t * 0.7 + orb.phaseOffset) * 0.15;
+  if (SHOW_ORBS) {
+    for (const orb of orbs) {
+      if (!orb.grabbed) {
+        orb.y = orb.baseY + Math.sin(t * 0.7 + orb.phaseOffset) * 0.15;
+      }
     }
   }
 
@@ -667,7 +688,7 @@ function xrFrame(time, frame) {
     const cp = view.transform.position;
     const camPos = new Float32Array([cp.x, cp.y, cp.z]);
 
-    renderEye(view, camPos);
+    if (SHOW_ORBS) renderEye(view, camPos);
     renderHands(frame, view);
   }
 }
@@ -726,7 +747,7 @@ if (!gl) {
   previewLoop(performance.now());
   status(
     'Open in AVP Safari · HTTPS required<br>' +
-    'Hover index finger near an orb · Pinch to grab &amp; move it'
+    'Shows 25 tracked hand joint points per hand in neon sky blue'
   );
 }
 
