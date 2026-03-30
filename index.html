@@ -113,7 +113,7 @@
 
 <div id="ui">
   <div id="title"><span class="dot"></span>WebXR · Hand Skeleton</div>
-  <button id="enter-btn" onclick="enterXR()">Enter VR</button>
+  <button id="enter-btn" onclick="enterXR()">Enter XR</button>
   <div id="check-support"></div>
 </div>
 
@@ -142,6 +142,8 @@ let t = 0;
 const orbs = [];
 const SHOW_ORBS = false;
 const JOINT_NEON_SKY_BLUE = [0.20, 0.90, 1.00];
+const sessionSupport = { vr: false, ar: false };
+let preferredMode = 'immersive-ar';
 
 // ─── logging ─────────────────────────────────────────────────────────────────
 const logs = [];
@@ -167,12 +169,26 @@ async function checkSupport() {
     enterBtn.disabled = true;
   } else {
     lines.push('<span class="ok">✓ WebXR API present</span>');
-    const supported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
-    if (supported) {
-      lines.push('<span class="ok">✓ immersive-vr supported</span>');
-    } else {
-      lines.push('<span class="no">✗ immersive-vr not supported</span>');
+    sessionSupport.ar = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+    sessionSupport.vr = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+    lines.push(
+      sessionSupport.ar
+        ? '<span class="ok">✓ immersive-ar supported</span>'
+        : '<span class="no">✗ immersive-ar not supported</span>'
+    );
+    lines.push(
+      sessionSupport.vr
+        ? '<span class="ok">✓ immersive-vr supported</span>'
+        : '<span class="no">✗ immersive-vr not supported</span>'
+    );
+    if (!sessionSupport.ar && !sessionSupport.vr) {
       enterBtn.disabled = true;
+      enterBtn.textContent = 'XR Unavailable';
+    } else {
+      // Prefer AR when available; auto-fallback to VR during launch if needed.
+      preferredMode = sessionSupport.ar ? 'immersive-ar' : 'immersive-vr';
+      enterBtn.disabled = false;
+      enterBtn.textContent = preferredMode === 'immersive-ar' ? 'Enter AR' : 'Enter VR';
     }
   }
   supportEl.innerHTML = lines.join('<br>');
@@ -702,11 +718,25 @@ async function enterXR() {
   if (previewRafId) cancelAnimationFrame(previewRafId);
 
   try {
-    xrSession = await navigator.xr.requestSession('immersive-vr', {
-      requiredFeatures: ['local-floor'],
-      optionalFeatures: ['hand-tracking', 'bounded-floor'],
-    });
-    log('XR session started');
+    const mode = preferredMode;
+    const fallbackMode = mode === 'immersive-ar' ? 'immersive-vr' : null;
+    try {
+      xrSession = await navigator.xr.requestSession(mode, {
+        requiredFeatures: ['local-floor'],
+        optionalFeatures: ['hand-tracking', 'bounded-floor'],
+      });
+      log(`${mode} session started`);
+    } catch (modeErr) {
+      if (!fallbackMode) throw modeErr;
+      log(`${mode} failed (${modeErr.message}) → trying ${fallbackMode}`);
+      xrSession = await navigator.xr.requestSession(fallbackMode, {
+        requiredFeatures: ['local-floor'],
+        optionalFeatures: ['hand-tracking', 'bounded-floor'],
+      });
+      preferredMode = fallbackMode;
+      enterBtn.textContent = 'Enter VR';
+      log(`${fallbackMode} session started`);
+    }
 
     xrSession.addEventListener('end', () => {
       log('XR session ended');
