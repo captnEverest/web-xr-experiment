@@ -101,6 +101,51 @@
     let glLayer = null;
     let canvas = null;
     let rafHandle = null;
+    let skeletonProgram = null;
+    let pointBuffer = null;
+    let lineBuffer = null;
+    let pointCount = 0;
+    let lineVertexCount = 0;
+
+    const HAND_JOINTS = [
+      "wrist",
+      "thumb-metacarpal", "thumb-phalanx-proximal", "thumb-phalanx-distal", "thumb-tip",
+      "index-finger-metacarpal", "index-finger-phalanx-proximal", "index-finger-phalanx-intermediate", "index-finger-phalanx-distal", "index-finger-tip",
+      "middle-finger-metacarpal", "middle-finger-phalanx-proximal", "middle-finger-phalanx-intermediate", "middle-finger-phalanx-distal", "middle-finger-tip",
+      "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal", "ring-finger-tip",
+      "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip"
+    ];
+
+    const HAND_BONES = [
+      ["wrist", "thumb-metacarpal"],
+      ["thumb-metacarpal", "thumb-phalanx-proximal"],
+      ["thumb-phalanx-proximal", "thumb-phalanx-distal"],
+      ["thumb-phalanx-distal", "thumb-tip"],
+
+      ["wrist", "index-finger-metacarpal"],
+      ["index-finger-metacarpal", "index-finger-phalanx-proximal"],
+      ["index-finger-phalanx-proximal", "index-finger-phalanx-intermediate"],
+      ["index-finger-phalanx-intermediate", "index-finger-phalanx-distal"],
+      ["index-finger-phalanx-distal", "index-finger-tip"],
+
+      ["wrist", "middle-finger-metacarpal"],
+      ["middle-finger-metacarpal", "middle-finger-phalanx-proximal"],
+      ["middle-finger-phalanx-proximal", "middle-finger-phalanx-intermediate"],
+      ["middle-finger-phalanx-intermediate", "middle-finger-phalanx-distal"],
+      ["middle-finger-phalanx-distal", "middle-finger-tip"],
+
+      ["wrist", "ring-finger-metacarpal"],
+      ["ring-finger-metacarpal", "ring-finger-phalanx-proximal"],
+      ["ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate"],
+      ["ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal"],
+      ["ring-finger-phalanx-distal", "ring-finger-tip"],
+
+      ["wrist", "pinky-finger-metacarpal"],
+      ["pinky-finger-metacarpal", "pinky-finger-phalanx-proximal"],
+      ["pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate"],
+      ["pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal"],
+      ["pinky-finger-phalanx-distal", "pinky-finger-tip"]
+    ];
 
     function writeLog(message) {
       console.log("[AVP XR]", message);
@@ -167,7 +212,189 @@
         throw new Error("Unable to create WebGL context.");
       }
 
+      initSkeletonRenderer();
       return gl;
+    }
+
+    function compileShader(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        throw new Error(gl.getShaderInfoLog(shader) || "Shader compilation failed");
+      }
+      return shader;
+    }
+
+    function createProgram(vsSource, fsSource) {
+      const vs = compileShader(gl.VERTEX_SHADER, vsSource);
+      const fs = compileShader(gl.FRAGMENT_SHADER, fsSource);
+      const program = gl.createProgram();
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(program) || "Program link failed");
+      }
+      return program;
+    }
+
+    function initSkeletonRenderer() {
+      const vert = `
+        attribute vec3 a_pos;
+        uniform mat4 u_viewProj;
+        uniform float u_pointSize;
+        void main() {
+          gl_Position = u_viewProj * vec4(a_pos, 1.0);
+          gl_PointSize = u_pointSize;
+        }
+      `;
+      const frag = `
+        precision mediump float;
+        uniform vec4 u_color;
+        void main() {
+          gl_FragColor = u_color;
+        }
+      `;
+
+      skeletonProgram = createProgram(vert, frag);
+      pointBuffer = gl.createBuffer();
+      lineBuffer = gl.createBuffer();
+    }
+
+    function mat4Multiply(a, b) {
+      const out = new Float32Array(16);
+      for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+          out[j * 4 + i] =
+            a[i] * b[j * 4] +
+            a[4 + i] * b[j * 4 + 1] +
+            a[8 + i] * b[j * 4 + 2] +
+            a[12 + i] * b[j * 4 + 3];
+        }
+      }
+      return out;
+    }
+
+    function mat4Inverse(m) {
+      const out = new Float32Array(16);
+      const m00 = m[0],  m01 = m[1],  m02 = m[2],  m03 = m[3];
+      const m10 = m[4],  m11 = m[5],  m12 = m[6],  m13 = m[7];
+      const m20 = m[8],  m21 = m[9],  m22 = m[10], m23 = m[11];
+      const m30 = m[12], m31 = m[13], m32 = m[14], m33 = m[15];
+
+      const b00 = m00 * m11 - m01 * m10;
+      const b01 = m00 * m12 - m02 * m10;
+      const b02 = m00 * m13 - m03 * m10;
+      const b03 = m01 * m12 - m02 * m11;
+      const b04 = m01 * m13 - m03 * m11;
+      const b05 = m02 * m13 - m03 * m12;
+      const b06 = m20 * m31 - m21 * m30;
+      const b07 = m20 * m32 - m22 * m30;
+      const b08 = m20 * m33 - m23 * m30;
+      const b09 = m21 * m32 - m22 * m31;
+      const b10 = m21 * m33 - m23 * m31;
+      const b11 = m22 * m33 - m23 * m32;
+
+      let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+      if (!det) return out;
+      det = 1.0 / det;
+
+      out[0] = (m11 * b11 - m12 * b10 + m13 * b09) * det;
+      out[1] = (m02 * b10 - m01 * b11 - m03 * b09) * det;
+      out[2] = (m31 * b05 - m32 * b04 + m33 * b03) * det;
+      out[3] = (m22 * b04 - m21 * b05 - m23 * b03) * det;
+      out[4] = (m12 * b08 - m10 * b11 - m13 * b07) * det;
+      out[5] = (m00 * b11 - m02 * b08 + m03 * b07) * det;
+      out[6] = (m32 * b02 - m30 * b05 - m33 * b01) * det;
+      out[7] = (m20 * b05 - m22 * b02 + m23 * b01) * det;
+      out[8] = (m10 * b10 - m11 * b08 + m13 * b06) * det;
+      out[9] = (m01 * b08 - m00 * b10 - m03 * b06) * det;
+      out[10] = (m30 * b04 - m31 * b02 + m33 * b00) * det;
+      out[11] = (m21 * b02 - m20 * b04 - m23 * b00) * det;
+      out[12] = (m11 * b07 - m10 * b09 - m12 * b06) * det;
+      out[13] = (m00 * b09 - m01 * b07 + m02 * b06) * det;
+      out[14] = (m31 * b01 - m30 * b03 - m32 * b00) * det;
+      out[15] = (m20 * b03 - m21 * b01 + m22 * b00) * det;
+      return out;
+    }
+
+    function updateHandGeometry(frame) {
+      const points = [];
+      const lines = [];
+      const inputSummary = [];
+
+      for (const source of xrSession.inputSources) {
+        const handedness = source.handedness || "unknown";
+        const hasHand = !!source.hand;
+        inputSummary.push(`${handedness}: hand=${hasHand}`);
+        if (!source.hand) continue;
+
+        const jointPos = {};
+        for (const name of HAND_JOINTS) {
+          const joint = source.hand.get(name);
+          if (!joint) continue;
+          const pose = frame.getJointPose(joint, xrRefSpace);
+          if (!pose) continue;
+          const p = pose.transform.position;
+          jointPos[name] = [p.x, p.y, p.z];
+          points.push(p.x, p.y, p.z);
+        }
+
+        for (const [a, b] of HAND_BONES) {
+          if (!jointPos[a] || !jointPos[b]) continue;
+          lines.push(jointPos[a][0], jointPos[a][1], jointPos[a][2]);
+          lines.push(jointPos[b][0], jointPos[b][1], jointPos[b][2]);
+        }
+
+        if (jointPos["wrist"]) {
+          const p = jointPos["wrist"];
+          inputSummary.push(`${handedness} wrist=(${p[0].toFixed(3)}, ${p[1].toFixed(3)}, ${p[2].toFixed(3)})`);
+        }
+      }
+
+      pointCount = points.length / 3;
+      lineVertexCount = lines.length / 3;
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, pointBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(points), gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lines), gl.DYNAMIC_DRAW);
+
+      if (inputSummary.length > 0) {
+        logBox.textContent = inputSummary.join("\n");
+      }
+    }
+
+    function drawSkeleton(view) {
+      const viewMat = mat4Inverse(new Float32Array(view.transform.matrix));
+      const projMat = new Float32Array(view.projectionMatrix);
+      const viewProj = mat4Multiply(projMat, viewMat);
+
+      gl.useProgram(skeletonProgram);
+      const aPos = gl.getAttribLocation(skeletonProgram, "a_pos");
+      const uViewProj = gl.getUniformLocation(skeletonProgram, "u_viewProj");
+      const uPointSize = gl.getUniformLocation(skeletonProgram, "u_pointSize");
+      const uColor = gl.getUniformLocation(skeletonProgram, "u_color");
+
+      gl.uniformMatrix4fv(uViewProj, false, viewProj);
+      gl.enableVertexAttribArray(aPos);
+
+      if (lineVertexCount > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(uPointSize, 1.0);
+        gl.uniform4f(uColor, 1.0, 0.05, 0.95, 1.0); // very visible magenta links
+        gl.drawArrays(gl.LINES, 0, lineVertexCount);
+      }
+
+      if (pointCount > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointBuffer);
+        gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+        gl.uniform1f(uPointSize, 18.0);
+        gl.uniform4f(uColor, 0.15, 1.0, 1.0, 1.0); // bright cyan joints
+        gl.drawArrays(gl.POINTS, 0, pointCount);
+      }
     }
 
     function onXRFrame(time, frame) {
@@ -179,48 +406,16 @@
       gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
       gl.clearColor(0.02, 0.03, 0.06, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.disable(gl.DEPTH_TEST);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
 
-      let inputSummary = [];
+      updateHandGeometry(frame);
 
-      for (const source of xrSession.inputSources) {
-        const handedness = source.handedness || "unknown";
-        const hasHand = !!source.hand;
-        inputSummary.push(`${handedness}: hand=${hasHand}`);
-
-        if (source.hand) {
-          const wrist = source.hand.get("wrist");
-          const indexTip = source.hand.get("index-finger-tip");
-          const thumbTip = source.hand.get("thumb-tip");
-
-          if (wrist) {
-            const wristPose = frame.getJointPose(wrist, xrRefSpace);
-            if (wristPose) {
-              const p = wristPose.transform.position;
-              inputSummary.push(
-                `${handedness} wrist=(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)})`
-              );
-            }
-          }
-
-          if (indexTip && thumbTip) {
-            const indexPose = frame.getJointPose(indexTip, xrRefSpace);
-            const thumbPose = frame.getJointPose(thumbTip, xrRefSpace);
-
-            if (indexPose && thumbPose) {
-              const a = indexPose.transform.position;
-              const b = thumbPose.transform.position;
-              const dx = a.x - b.x;
-              const dy = a.y - b.y;
-              const dz = a.z - b.z;
-              const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-              inputSummary.push(`${handedness} pinchDist=${dist.toFixed(4)}m`);
-            }
-          }
-        }
-      }
-
-      if (inputSummary.length > 0) {
-        logBox.textContent = inputSummary.join("\n");
+      for (const view of pose.views) {
+        const vp = glLayer.getViewport(view);
+        gl.viewport(vp.x, vp.y, vp.width, vp.height);
+        drawSkeleton(view);
       }
     }
 
