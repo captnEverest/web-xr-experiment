@@ -123,7 +123,9 @@
 <script>
 // ─── globals ────────────────────────────────────────────────────────────────
 const canvas   = document.getElementById('canvas');
-const gl       = canvas.getContext('webgl2') || canvas.getContext('webgl');
+// AVP compatibility: avoid multisampled XR swapchains by disabling antialiasing.
+const glContextAttrs = { antialias: false, alpha: true, depth: true, stencil: false };
+const gl       = canvas.getContext('webgl2', glContextAttrs) || canvas.getContext('webgl', glContextAttrs);
 const statusEl = document.getElementById('status');
 const logEl    = document.getElementById('log');
 const enterBtn = document.getElementById('enter-btn');
@@ -713,7 +715,8 @@ async function enterXR() {
       previewLoop(performance.now());
     });
 
-    const layer = new XRWebGLLayer(xrSession, gl);
+    // Explicitly request non-AA XR layer for better Vision Pro compatibility.
+    const layer = new XRWebGLLayer(xrSession, gl, { antialias: false, alpha: true, depth: true, stencil: false });
     await xrSession.updateRenderState({ baseLayer: layer });
     xrGLLayer = layer;
     log('XRWebGLLayer bound');
